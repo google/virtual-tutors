@@ -1,0 +1,128 @@
+{
+  "rules": {
+    "classes": {
+      "info": {
+        ".read": "auth != null",
+        ".write": "newData.parent().parent().child('users').child(auth.uid).child('isAdmin').val() == true",
+        "$classid": {
+          ".validate": "newData.hasChildren(['classname'])",
+          "classname": {
+            ".validate": "newData.isString()"
+          },
+          "location": {
+            ".validate": "newData.isString()"
+          },
+          "$other": {
+            ".validate": "false"
+          }
+        }
+      },
+      "onlinestatus": {
+        "$classid": {
+          "$userid": {
+            ".validate": "newData.isBoolean()",
+            ".read": "auth != null && root.child('classes').child('members').child($classid).child(auth.uid).val() != null",
+            ".write": "auth != null && auth.uid == $userid && (auth != null && newData.parent().parent().parent().parent().child('classes').child('members').child($classid).child(auth.uid).val() != null)"
+          }
+        }
+      },
+      "helprequests": {
+        "$classid": {
+          ".read": "auth != null && root.child('classes').child('members').child($classid).child(auth.uid).val() != null || root.child('users').child(auth.uid).child('isAdmin').val() == true",
+          ".write": "auth != null && newData.parent().parent().parent().child('classes').child('members').child($classid).child(auth.uid).val() != null",
+          ".indexOn": [
+            "status"
+          ]
+        }
+      },
+      "helprequestcandidates": {
+        "$classid": {
+          ".read": "auth != null && root.child('classes').child('members').child($classid).child(auth.uid).val() != null || root.child('users').child(auth.uid).child('isAdmin').val() == true",
+          ".write": "auth != null && newData.parent().parent().parent().child('classes').child('members').child($classid).child(auth.uid).val() != null"
+        }
+      },
+      "logs": {
+        "$classid": {
+          ".read": "root.child('users').child(auth.uid).child('isAdmin').val() == true",
+          ".write": "auth != null"
+        }
+      },
+      "members": {
+        "$classid": {
+          "$userid": {
+            ".validate": "newData.isString()",
+            ".read": "auth != null",
+            ".write": "newData.parent().parent().parent().parent().child('users').child(auth.uid).child('isAdmin').val() == true"
+          }
+        }
+      }
+    },
+    "users": {
+      "logs": {
+        "$userid": {
+          ".read": "root.child('users').child(auth.uid).child('isAdmin').val() == true",
+          ".write": "auth != null"
+        }
+      },
+      "messages": {
+        "$userid": {
+          "$messageid": {
+            ".validate": "newData.hasChildren(['sender', 'message', 'timestamp']) && newData.child('message').val().length < 141",
+            "sender": {
+              ".validate": "newData.isString()"
+            },
+            "message": {
+              ".validate": "newData.isString()"
+            },
+            "timestamp": {
+              ".validate": "newData.isNumber() && newData.val() == now"
+            },
+            "$other": {
+              ".validate": "false"
+            },
+            ".read": "auth != null && auth.uid == $userid",
+            ".write": "auth != null && auth.uid == $userid"
+          }
+        }
+      },
+      "classes": {
+        "$userid": {
+          ".read": "auth != null && auth.uid == $userid || root.child('users').child(auth.uid).child('isAdmin').val() == true",
+          ".write": "newData.parent().parent().parent().child('users').child(auth.uid).child('isAdmin').val() == true",
+          "$classid": {
+            ".validate": "newData.isString()",
+            ".read": "auth != null && auth.uid == $userid || root.child('users').child(auth.uid).child('isAdmin').val() == true",
+            ".write": "newData.parent().parent().parent().parent().child('users').child(auth.uid).child('isAdmin').val() == true"
+          }
+        },
+        "emails": {
+          ".validate": "true",
+          ".read": "auth != null",
+          ".write": "newData.parent().parent().parent().child('users').child(auth.uid).child('isAdmin').val() == true",
+          "$useremail": {
+            "$key1": {
+              ".validate": "newData.hasChildren(['classid', 'role'])",
+              "classid": {
+                ".validate": "newData.isString()"
+              },
+              "role": {
+                ".validate": "newData.isString()"
+              },
+              "$other": {
+                ".validate": "false"
+              }
+            },
+            ".validate": "newData.hasChildren()"
+          }
+        }
+      },
+      "$userid": {
+        "isAdmin": {
+          ".validate": "newData.isBoolean()",
+          ".read": "auth != null && auth.uid == $userid || root.child('users').child(auth.uid).child('isAdmin').val() == true",
+          ".write": "newData.parent().parent().parent().child('users').child(auth.uid).child('isAdmin').val() == true"
+        }
+      }
+    }
+  }
+}

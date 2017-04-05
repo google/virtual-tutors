@@ -1,0 +1,309 @@
+<!--
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+-->
+<link rel="import" href="../bower_components/paper-card/paper-card.html">
+<link rel="import" href="../bower_components/polymer/polymer.html">
+<link rel="import" href="../bower_components/paper-fab/paper-fab.html">
+<link rel="import" href="../bower_components/iron-icons/communication-icons.html">
+<link rel="import" href="shared-styles.html">
+
+<dom-module id="vt-conference">
+  <template>
+    <style include="shared-styles">
+       :host {
+        display: block;
+        padding: 0px;
+        background: #ffffff;
+      } 
+    </style>
+
+    <div class="layout-container">
+        <div class="flexchild"></div>
+        <div class="video-container">
+          <video id="receivedVideo" autoplay height="480" width="640"></video>
+          <video id="localVideo" autoplay muted height="120" width="160"></video>
+        </div>
+        <div class="flexchild"></div>
+    </div>
+
+    <paper-fab 
+      id="helpRequestFab"
+      class="second-fab"
+      icon="help-outline"
+      on-tap="helpRequest"
+      disabled="[[!enableHelpRequest]]"
+      aria-label="Request help ">
+    </paper-fab>
+    <paper-fab
+      id="hangupCallFab"
+      icon="communication:call-end"
+      on-tap="hangUpCall"
+      disabled="true"
+      aria-label="Hang Up Call">
+    </paper-fab>
+
+  </template>
+
+  <script>
+    Polymer({
+      is: 'vt-conference',
+
+      properties: {
+        currentUser: {
+          type: Object,
+          value: {"name": "", "uid": "", "email": "", isTeacher: false, isStudent: false, currentClass: ""}
+        },
+        enableHelpRequest: {
+          type: Boolean,
+          value: false
+        },
+        mediaConstraints: {
+          type: Object,
+          value: {"audio": true, "video": true}
+        },
+        currentPeerConnection: {
+          type: Object,
+          value: null
+        },
+        turnServer: {
+          type: Object,
+          value: {"url":"[INSERT URL OF YOUR TURN SERVER]", "userName": "[INSERT TURN USERNAME]", "password": "[INSERT TURN PASSWORD]"}
+        },
+        hasAddTrack: {
+          type: Boolean,
+          value: false
+        }
+      },
+
+      helpRequest: function() {
+        console.log("User called for help!", this.currentUser);
+        if (this.currentPeerConnection) {
+          alert("You can't start a new request while you still one pending.");
+        } else {
+          this.createPeerConnection();
+          navigator.mediaDevices.getUserMedia(this.mediaConstraints)
+            .then(function(localStream) {
+              this.$.localVideo.srcObject = localStream;
+              if (this.hasAddTrack) {
+                localStream.getTracks().forEach(track => this.currentPeerConnection.addTrack(track, localStream));
+              } else {
+                this.currentPeerConnection.addStream(localStream);
+              }
+              this.$.hangupCallFab.disabled = false;
+            }.bind(this))
+            .catch(this.handleGetUserMediaError);
+        }
+      },
+
+      acceptHelpRequest: function(studentSdp) {
+        this.createPeerConnection();
+        //console.log("Student SDP is: ", studentSdp);
+        this.$.hangupCallFab.disabled = false;
+        var desc = new RTCSessionDescription({"type": "offer", "sdp": studentSdp});
+        this.currentPeerConnection.setRemoteDescription(desc)
+          .then(function() {
+            return navigator.mediaDevices.getUserMedia(this.mediaConstraints);
+          }.bind(this))
+          .then(function(localStream) {
+            this.$.localVideo.srcObject = localStream;
+            if (this.hasAddTrack) {
+                localStream.getTracks().forEach(track => this.currentPeerConnection.addTrack(track, localStream));
+            } else {
+                this.currentPeerConnection.addStream(localStream);
+            }
+          }.bind(this))
+          .then(function() {
+            return this.currentPeerConnection.createAnswer();
+          }.bind(this))
+          .then(function(answer) {
+            //console.log("Generated answer: ", answer);
+            return this.currentPeerConnection.setLocalDescription(answer);
+          }.bind(this))
+          .then(function() {
+            //console.log("Firing answer-help-request!", this.currentPeerConnection.localDescription.sdp);
+            this.fire("answer-help-request", {"tutorSdp": this.currentPeerConnection.localDescription.sdp});
+          }.bind(this))
+          .catch(this.handleGetUserMediaError);
+      },
+
+      // Responds to a video answer from a tutor
+      handleVideoAnswer: function(tutorSdp) {
+        //console.log("Received answer from tutor: ", tutorSdp);
+        var desc = new RTCSessionDescription({"type": "answer", "sdp": tutorSdp});
+        this.currentPeerConnection.setRemoteDescription(desc).catch(this.reportError);
+      },
+
+      // A new ICE candidate was received from other peer
+      handleNewICECandidate: function(candidate) {
+        //console.log("Received new ICE candidate at videoconf: ", candidate);
+        var newCandidate = new RTCIceCandidate(candidate);
+        //console.log("Created and added new candidate: ", newCandidate);
+        this.currentPeerConnection.addIceCandidate(newCandidate).catch(this.reportError);
+      },
+
+      createPeerConnection: function() {
+        this.currentPeerConnection = new RTCPeerConnection({
+          iceServers: [     // Information about ICE servers
+            {
+              urls: "turn:" + this.turnServer.url,  // A TURN server
+              username: this.turnServer.userName,
+              credential: this.turnServer.password
+            }
+          ]
+        });
+
+        this.currentPeerConnection.onicecandidate = this.handleICECandidateEvent.bind(this); 
+        this.currentPeerConnection.onremovestream = this.handleRemoveStreamEvent.bind(this);
+        this.currentPeerConnection.oniceconnectionstatechange = this.handleICEConnectionStateChangeEvent.bind(this);
+        this.currentPeerConnection.onicegatheringstatechange = this.handleICEGatheringStateChangeEvent.bind(this);
+        this.currentPeerConnection.onsignalingstatechange = this.handleSignalingStateChangeEvent.bind(this);
+        this.currentPeerConnection.onnegotiationneeded = this.handleNegotiationNeededEvent.bind(this);
+
+        // Does the browser support addTrack?  If so, use it.  If not, use addstream instead
+        this.hasAddTrack = (this.currentPeerConnection.addTrack !== undefined);
+        if (this.hasAddTrack) {
+          this.currentPeerConnection.ontrack = this.handleTrackEvent.bind(this);
+        } else {
+          this.currentPeerConnection.onaddstream = this.handleAddStreamEvent.bind(this);
+        }
+
+        console.log("Established peer connection: ", this.currentPeerConnection);
+      },
+
+      handleICECandidateEvent: function(event) {
+        if (event.candidate) {
+          //console.log("New ICE candidate firing: ", event);
+          this.fire("new-ice-candidate", {"candidate": event.candidate.toJSON() });
+        }
+      },
+
+      handleTrackEvent: function(event) {
+        //console.log("Handle track event called: ", event);
+        this.$.receivedVideo.srcObject = event.streams[0];
+      },
+
+      handleAddStreamEvent: function(event) {
+        //console.log("Handle add stream event called: ", event);
+        this.$.receivedVideo.srcObject = event.stream;
+      },
+
+      handleRemoveStreamEvent: function(event) {
+        this.closeVideoCall();
+      },
+
+      handleICEConnectionStateChangeEvent: function(event) {
+        if (this.currentPeerConnection) {
+          switch(this.currentPeerConnection.iceConnectionState) {
+            case "closed":
+            case "failed":
+            case "disconnected":
+              this.closeVideoCall();
+              break;
+          }
+        }
+      },
+
+      handleICEGatheringStateChangeEvent: function(event) {
+        console.log("*** ICE gathering state changed to: " + this.currentPeerConnection.iceGatheringState);
+      }, 
+
+      handleSignalingStateChangeEvent: function(event) {
+        if (this.currentPeerConnection) {
+          console.log("*** WebRTC signaling state changed to: " + this.currentPeerConnection.signalingState);
+          switch(this.currentPeerConnection.signalingState) {
+            case "closed":
+              this.closeVideoCall();
+              break;
+            }
+        }
+      },
+
+      handleNegotiationNeededEvent: function() {
+        console.log("Negotiation needed called: ", this.currentPeerConnection);
+        if (this.currentPeerConnection.signalingState !== 'have-remote-offer') {
+          this.currentPeerConnection.createOffer()
+            .then(function(offer) {
+              console.log("Offer is: ", offer);
+              return this.currentPeerConnection.setLocalDescription(offer);
+            }.bind(this))
+            .then(function() {
+               console.log("Firing help request studentSdp.", this.currentPeerConnection);
+               this.fire("new-help-request", {"studentSdp": this.currentPeerConnection.localDescription.sdp});
+             }.bind(this))
+            .catch(this.reportError);
+        } else {
+          console.log("Negotiation needed called for teacher!");
+        }
+      },
+
+      handleGetUserMediaError: function(e) {
+        switch(e.name) {
+          case "NotFoundError":
+            alert("Unable to open your call because no camera and/or microphone were found.");
+            break;
+          case "SecurityError":
+          case "PermissionDeniedError":
+          // Do nothing; this is the same as the user canceling the call.
+            break;
+          default:
+            alert("Error opening your camera and/or microphone: " + e.message);
+            break;
+        }
+        this.closeVideoCall;
+      },
+
+      hangUpCall: function() {
+        console.log("Closing out the call.");
+        this.closeVideoCall();
+        this.fire("hangup-call");
+      },
+
+      closeVideoCall: function () {
+        console.log("Closing the video call.");
+        if (this.currentPeerConnection) {
+          this.currentPeerConnection.onicecandidate = null; 
+          this.currentPeerConnection.onremovestream = null;
+          this.currentPeerConnection.oniceconnectionstatechange = null;
+          this.currentPeerConnection.onicegatheringstatechange = null;
+          this.currentPeerConnection.onsignalingstatechange = null;
+          this.currentPeerConnection.onnegotiationneeded = null;
+
+          if (this.hasAddTrack) {
+            this.currentPeerConnection.ontrack = null;
+          } else {
+            this.currentPeerConnection.onaddstream = null;
+          }
+          if (this.$.receivedVideo.srcObject) {
+            this.$.receivedVideo.srcObject.getTracks().forEach(track => track.stop());
+          }
+          if (this.$.localVideo.srcObject) {
+            this.$.localVideo.srcObject.getTracks().forEach(track => track.stop());
+          }
+          this.$.receivedVideo.srcObject = null;
+          this.$.localVideo.srcObject = null;
+
+          this.currentPeerConnection.close();
+          this.currentPeerConnection = null;
+        }
+        this.$.hangupCallFab.disabled = true;
+      },
+ 
+      reportError: function(e) {
+        console.log("Error report: ", e);
+      }
+
+   });
+  </script>
+</dom-module>

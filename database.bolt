@@ -1,0 +1,148 @@
+//
+// Classes
+//
+
+// See examples at: https://gist.github.com/deltaepsilon
+// https://github.com/firebase/bolt/blob/master/docs/guide.md
+// https://howtofirebase.com/firebase-data-structures-security-rules-72fd4ad91f0d#.fnk7jfs2c
+// https://firebase.google.com/docs/database/web/structure-data
+
+path /classes/info {
+  read() { isSignedIn() }
+  write() { isAdmin() }
+}
+
+path /classes/info/{classid} is ClassInfo {
+}
+
+path /classes/onlinestatus/{classid}/{userid} is Boolean {
+  read() { isClassMember(classid) }
+  write() { isCurrentUser(userid) && isClassMember(classid) }
+}
+
+path /classes/helprequests/{classid} {
+  read() { isClassMember(classid) || isAdmin() }
+  write() { isClassMember(classid) }
+  index() { ["status"] }
+}
+
+path /classes/helprequestcandidates/{classid} {
+  read() { isClassMember(classid) || isAdmin() }
+  write() { isClassMember(classid) }
+}
+
+path /classes/helprequests/{classid}/{requestid} {
+}
+
+path /classes/logs/{classid} {
+  read() { isAdmin() }
+  write() { isSignedIn() }
+}
+
+path /classes/members/{classid}/{userid} is String {
+  read() { isSignedIn() }
+  write() { isAdmin() }
+}
+
+type ClassInfo {
+  classname: String,
+  location: String | Null
+}
+
+type ClassHelpRequest {
+  status: String,
+  studentId: String,
+  studentName: String,
+  startTime: InitialTimestamp,
+  studentSdp: String,
+  tutorId: String | Null,
+  tutorName: String | Null,
+  acceptTime: InitialTimestamp | Null,
+  tutorSdp: String | Null,
+  endTime: CurrentTimestamp | Null
+}
+
+//
+// Users
+//
+
+path /users/logs/{userid} {
+  read() { isAdmin() }
+  write() { isSignedIn() }
+}
+
+path /users/messages/{userid}/{messageid} is UserMessage {
+  read() { isCurrentUser(userid) } // Admins can't read messages of users
+  write() { isCurrentUser(userid) }
+}
+
+path /users/classes/{userid} {
+  read() { isCurrentUser(userid) || isAdmin() }
+  write() { isAdmin() }
+}
+
+path /users/classes/{userid}/{classid} is String {
+  read() { isCurrentUser(userid) || isAdmin() }
+  write() { isAdmin() }
+}
+
+path /users/{userid}/isAdmin is Boolean {
+  read() { isCurrentUser(userid) || isAdmin() }
+  write() { isAdmin() }
+}
+
+// User emails for provisioning classes must be in the following format:
+// user-dot-name@example-dot-com, i.e., each "." must be replaced with "-dot-"
+// Entries should be made in pairs that include 1) the classid and 2) the role of the user
+// in that class, e.g., "student" or "teacher"
+
+path /users/classes/emails {
+  read() { isSignedIn() }
+  write() { isAdmin() }
+}
+
+path /users/classes/emails/{useremail} is UserEmailAndRole[] {
+}
+
+type UserEmailAndRole {
+  classid: String,
+  role: String
+}
+
+type UserMessage {
+  validate() { this.message.length < 141 }
+  sender: String,
+  message: String,
+  timestamp: CurrentTimestamp
+}
+
+//
+// Helper Types
+//
+type CurrentTimestamp extends Number {
+  validate() { this == now }
+}
+
+type InitialTimestamp extends Number {
+  validate() { initial(this, now) }
+}
+
+type NameString {
+  validate() { this.length > 1 && this.length < 30 }
+}
+
+type LogEntry {
+  timestamp: Number,
+  type: String,
+  message: String
+}
+
+//
+// Helper Functions
+//
+isClassMember(classid) { isSignedIn() && root.classes.members[classid][auth.uid] != null }
+isCurrentUser(uid) { isSignedIn() && auth.uid == uid }
+isSignedIn() { auth != null }
+createOnly(value) { prior(value) == null && value != null }
+isAdmin() { root.child('users').child(auth.uid).child('isAdmin').val() }
+initial(value, init) { value == (prior(value) == null ? init : prior(value)) }

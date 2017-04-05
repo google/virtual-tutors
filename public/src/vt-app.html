@@ -1,0 +1,507 @@
+<!--
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+-->
+<!-- Virtual tutor main application -->
+<link rel="import" href="vt-login.html">
+<link rel="import" href="vt-toolbar.html">
+<link rel="import" href="vt-conference.html">
+<link rel="import" href="vt-user-list.html">
+<link rel="import" href="vt-class-list.html">
+<link rel="import" href="vt-help-requests.html">
+<link rel="import" href="shared-styles.html">
+<link rel="import" href="../bower_components/paper-fab/paper-fab.html">
+<link rel="import" href="../bower_components/polymerfire/polymerfire.html">
+<link rel="import" href="../bower_components/paper-drawer-panel/paper-drawer-panel.html">
+<link rel="import" href="../bower_components/paper-toolbar/paper-toolbar.html">
+<link rel="import" href="../bower_components/paper-menu/paper-menu.html">
+<link rel="import" href="../bower_components/paper-item/paper-item.html">
+<link rel="import" href="../bower_components/iron-icons/communication-icons.html">
+<link rel="import" href="../bower_components/iron-pages/iron-pages.html">
+<link rel="import" href="../bower_components/iron-selector/iron-selector.html">
+
+<dom-module id="vt-app">
+  <template>
+    <style include="shared-styles"></style>
+    <firebase-app
+      id="firebaseApp"
+      name="vtutor"
+      api-key="[INSERT YOUR API KEY HERE]"
+      auth-domain="your-domain.firebaseapp.com"
+      database-url="https://your-domain.firebaseio.com">
+    </firebase-app>
+
+    <paper-drawer-panel force-narrow id="drawerPanel">
+      <div drawer>
+        <paper-toolbar class="vt-menu-header"> 
+          <span class="title">Menu</span>
+        </paper-toolbar>
+        <paper-menu>
+          <paper-item id="video-conf" on-tap="pageSelect">Video Conference</paper-item>
+          <paper-item id="user-list" on-tap="pageSelect">User List</paper-item>
+          <paper-item id="class-list" on-tap="pageSelect">Class List</paper-item>
+          <paper-item id="help-requests" on-tap="pageSelect">Help Requests</paper-item>
+        </paper-menu> 
+    
+      </div>
+      <div main>
+        <vt-toolbar 
+          signed-in="[[signedIn]]"
+          on-sign-out="signOut">
+          <!-- photo-url="[[user.photoURL]]"> -->
+        </vt-toolbar>
+        <vt-login
+          on-sign-in="signIn"
+          signed-in="[[signedIn]]"
+          disabled="[[!online]]">
+        </vt-login>
+        <firebase-auth
+          id="auth"
+          app-name="vtutor"
+          provider="google"
+          signed-in="{{signedIn}}"
+          user="{{user}}">
+        </firebase-auth>
+
+        <iron-pages
+           id="ironPages"
+           selected="video-conf"
+           attr-for-selected="name"
+           fallback-selection="view404"
+           role="main">
+           <div name="video-conf">
+             <vt-conference id="videoConference" name="vt-conference"></vt-conference>
+           </div>
+           <div name="user-list">
+             <vt-user-list id="userList"></vt-user-list>
+           </div>
+           <div name="class-list">
+             <vt-class-list id="classList"></vt-class-list>
+           </div>
+           <div name="help-requests">
+             <vt-help-requests id="helpRequests"></vt-help-requests>
+           </div>
+           <div name="view404">
+             Oops you hit a 404. <a href="/">Head back to home.</a> 
+           </div>
+           <div name="view403">
+             <h1>Oops - looks like you do not have access! Please email the administrator for help.</h1>
+           </div>
+
+        </iron-pages> 
+     </div>
+    </paper-drawer-panel>
+  </template>
+  <script>
+    Polymer({
+      is: 'vt-app',
+      properties: {
+        userCurrentClass: {
+          type: String
+        },
+        userCurrentRole: {
+          type: String
+        },
+        pendingHelpRequest: {
+          type: Object,
+          value: null
+        }
+      },
+
+      listeners: {
+        'toggle-drawer': 'toggleDrawer'
+      }, 
+
+      attached: function() {
+        console.log("VT App attached");
+        this.$.auth.addEventListener('signed-in-changed', function() {
+          if (this.$.auth.signedIn === true) {
+            this.onSignIn();
+          }          
+        }.bind(this));
+
+        // Event handlers for help request events
+        this.$.helpRequests.addEventListener('request-answered', function(event) {
+          this.onRemoteAnswer(event.detail.requestId);
+        }.bind(this));
+        this.$.helpRequests.addEventListener('local-request-answered', function(event) {
+          this.onLocalAnswer(event.detail.requestId);         
+        }.bind(this));
+
+        // Event handlers for video conference events
+        this.$.videoConference.addEventListener('new-help-request', function(event) {
+          this.generateNewHelpRequest(event.detail.studentSdp);
+        }.bind(this));
+        this.$.videoConference.addEventListener('answer-help-request', function(event) {
+          this.answerHelpRequest(event.detail.tutorSdp);
+        }.bind(this));
+        this.$.videoConference.addEventListener('new-ice-candidate', function(event) {
+          this.addNewICECandidate(event.detail.candidate);
+        }.bind(this));       
+        this.$.videoConference.addEventListener('hangup-call', function() {
+          this.closeCurrentHelpRequest();
+        }.bind(this));
+
+        // Teardown connections on page hide or beforeunload
+        window.addEventListener("beforeunload", function(event) {
+          console.log("Terminate current class!");
+          this.setOnlineStatus(false);
+          if (this.pendingHelpRequest) {
+            this.closeCurrentHelpRequest();
+          }
+        }.bind(this));
+
+      },
+
+      toggleDrawer: function() {
+        this.$.drawerPanel.togglePanel();
+      },
+
+      signIn: function() {
+        this.$.auth.signInWithPopup()
+          .then(function(response) {
+            console.log("Signed in user.");
+        });
+      },
+  
+      pageSelect: function(e) {
+        this.$.ironPages.select(e.target.id);
+        this.$.drawerPanel.closeDrawer();
+      },
+
+      toUserEmailPath: function(useremail) {
+        var formattedEmail = useremail.replace(/\./gi, '-dot-');
+        return "/users/classes/emails/" + formattedEmail;
+      }, 
+
+      onSignIn: function() {
+        this.$.firebaseApp.app.database().ref("/users/classes/" + this.$.auth.user.uid)
+          .once('value')
+          .then(function(snapshot) {
+            console.log("Retrieved user info: ", snapshot.val());
+            this.setCurrentUserInfo(snapshot.val());
+          }.bind(this));
+      },
+
+      setCurrentUserInfo: function(userInfo) {
+        if (userInfo != null) {
+          var courseArray = Object.keys(userInfo);
+          if (courseArray.length > 0) {
+            this.userCurrentClass = courseArray[0].toString();
+            this.userCurrentRole = userInfo[courseArray[0]];
+            this.setOnlineStatus(true);
+            this.$.videoConference.currentUser.name = this.$.auth.user.displayName;
+            this.$.videoConference.currentUser.uid = this.$.auth.user.uid;
+            this.$.videoConference.currentUser.email = this.$.auth.user.email;
+            this.$.videoConference.currentUser.currentClass = this.userCurrentClass;
+            this.$.helpRequests.currentClass = this.userCurrentClass;
+            if (this.userCurrentRole === "Teacher") {
+              this.$.videoConference.currentUser.isTeacher = true;
+            }
+            else {
+              this.$.videoConference.currentUser.isStudent = true;
+              this.$.videoConference.enableHelpRequest = true;
+            }
+            console.log("User info: ", this.$.videoConference.currentUser);
+          }
+          else {
+            this.checkEmailRoster();
+          }
+        }
+        else {
+          this.checkEmailRoster();
+        }
+      },
+
+      // If the current user hasn't been provisioned, this function checks whether the user has been
+      // added to the email roster 
+      checkEmailRoster: function() {
+        this.$.firebaseApp.app.database().ref(this.toUserEmailPath(this.$.auth.user.email))
+          .once('value')
+          .then(function(snapshot) {
+            var result = snapshot.val();
+            if (result instanceof Array) {
+              if (result.length > 0) {
+                console.log("Setting values");
+                this.updateUserClasses(result);
+              } else { this.$.ironPages.select("view403"); }
+            } else { this.$.ironPages.select("view403"); }            
+          }.bind(this));
+      },
+
+      // If the current user has been added to the email roster, this function provisions the user ID into the database
+      updateUserClasses: function(resultArray) {
+        for (var i = 0; i < resultArray.length; i++) {
+          console.log("User email entry: ", resultArray[i]);
+          this.$.firebaseApp.app.database()
+            .ref("/classes/members/" + resultArray[i].classid + "/" + this.$.auth.user.uid)
+            .set(resultArray[i].role);
+          this.$.firebaseApp.app.database()
+            .ref("/users/classes/" + this.$.auth.user.uid + "/" + resultArray[i].classid)
+            .set(resultArray[i].role)
+            .then(function() { this.onSignIn(); }.bind(this));
+        }
+      },
+
+      setOnlineStatus: function(isOnline) {
+        this.$.firebaseApp.app.database().ref("/classes/onlinestatus/" + this.userCurrentClass + '/' + this.$.auth.user.uid)
+          .set(isOnline);
+      },
+
+      generateNewHelpRequest: function(studentSdp) {
+        // Initialize pendingHelpRequest for student
+        var helpRequestData = {
+          "status": "New",
+          "studentId": this.$.auth.user.uid,
+          "studentName": this.$.auth.user.displayName,
+          "startTime": Date.now(),
+          "studentSdp": studentSdp
+        };
+        
+        // Persist the new helpRequest to firebase
+        var requestId = this.$.firebaseApp.app.database().ref("/classes/helprequests")
+          .child(this.userCurrentClass)
+          .push().key
+        this.$.firebaseApp.app.database()
+          .ref("/classes/helprequests/" + this.userCurrentClass + "/" + requestId).set(helpRequestData);
+
+        // Initialize this.pendingHelpRequest   
+        this.pendingHelpRequest = helpRequestData;
+        this.pendingHelpRequest.requestId = requestId;
+        this.pendingHelpRequest.isStudent = true;
+        console.log("Pending help request initialized for student: ", this.pendingHelpRequest);
+
+        // Set listener for value changes to the student helpRequest
+        this.$.firebaseApp.app.database()
+          .ref("/classes/helprequests/" + this.userCurrentClass + "/" + this.pendingHelpRequest.requestId)
+          .on("value", function(snapshot) {
+            console.log("Student HelpRequest updated: ", snapshot.val());
+            this.studentHelpRequestUpdated(snapshot.val());
+          }.bind(this));
+
+        // Set listener for new tutor candidates
+        this.$.firebaseApp.app.database()
+          .ref("/classes/helprequestcandidates/" + this.userCurrentClass + "/" + this.pendingHelpRequest.requestId + "/tutor")
+          .on("child_added", function(snapshot) {
+            //console.log("Tutor ICE candidate received: ", snapshot.val());
+            this.receivedICECandidate(snapshot.val());
+          }.bind(this));          
+      },
+
+      onRemoteAnswer: function(requestId) {
+        // Set page to video conference page
+        this.$.ironPages.select('video-conf');
+        
+        // Retrieve the helpRequest using the requestID
+        this.$.firebaseApp.app.database().ref("/classes/helprequests/" + this.userCurrentClass + "/" + requestId)
+          .once('value')
+          .then(function(snapshot) {
+            console.log("Retrieved help request: ", snapshot.val());
+            var helpRequest = snapshot.val();
+            var requestUpdateData = {
+              "status": "Connecting",
+              "acceptTime": Date.now(),
+              "tutorId": this.$.auth.user.uid,
+              "tutorName": this.$.auth.user.displayName
+            };
+
+            // Update help request entry in database to reflect tutor's answer
+            this.$.firebaseApp.app.database().ref("/classes/helprequests/" + this.userCurrentClass)
+              .child(requestId)
+              .update(requestUpdateData);
+
+            // Initialize the pendingHelpRequest for the teacher
+            this.pendingHelpRequest = requestUpdateData;
+            this.pendingHelpRequest.studentId = helpRequest.studentId;
+            this.pendingHelpRequest.studentName = helpRequest.studentName;
+            this.pendingHelpRequest.startTime = helpRequest.startTime;
+            this.pendingHelpRequest.studentSdp = helpRequest.studentSdp;
+            this.pendingHelpRequest.requestId = requestId;
+            this.pendingHelpRequest.isStudent = false;
+            console.log("Pending help request initialized for teacher: ", this.pendingHelpRequest);
+
+            // Call the acceptHelpRequest function in the video conference component with the student's SDP
+            this.$.videoConference.acceptHelpRequest(this.pendingHelpRequest.studentSdp);
+          }.bind(this));
+      },
+
+      // Handle tutor's response to the student's help request
+      answerHelpRequest: function(tutorSdp) {
+        this.pendingHelpRequest.tutorSdp = tutorSdp;
+        console.log("Updating Help request to add tutorSdp: ", this.pendingHelpRequest);
+        this.$.firebaseApp.app.database().ref("/classes/helprequests/" + this.userCurrentClass)
+              .child(this.pendingHelpRequest.requestId)
+              .update({"tutorSdp": this.pendingHelpRequest.tutorSdp});
+
+        // Set listener for value changes to the teacher helpRequest
+        this.$.firebaseApp.app.database()
+          .ref("/classes/helprequests/" + this.userCurrentClass + "/" + this.pendingHelpRequest.requestId)
+          .on('value', function(snapshot) {
+            console.log("Tutor HelpRequest updated: ", snapshot.val());
+            this.teacherHelpRequestUpdated(snapshot.val());
+          }.bind(this));
+
+        // Set listener for new student candidates
+        this.$.firebaseApp.app.database()
+          .ref("/classes/helprequestcandidates/" + this.userCurrentClass + "/" + this.pendingHelpRequest.requestId + "/student")
+          .on("child_added", function(snapshot) {
+            //console.log("Student ICE candidate received: ", snapshot.val());
+            this.receivedICECandidate(snapshot.val());
+          }.bind(this));
+      },
+
+      // Handler for updates to the student's help request
+      studentHelpRequestUpdated: function(helpRequest) {
+        if (helpRequest) {
+          switch(helpRequest.status) {
+            case "New":
+              console.log("Student help request updated: ", helpRequest);
+              break;
+            case "Connecting":
+              console.log("Student help request updated: ", helpRequest);
+              if (!this.pendingHelpRequest.hasOwnProperty('tutorSdp') && helpRequest.hasOwnProperty('tutorSdp')) {
+                this.pendingHelpRequest.tutorSdp = helpRequest.tutorSdp;
+                this.$.videoConference.handleVideoAnswer(helpRequest.tutorSdp);
+              }
+              break;
+            case "Closing":
+              console.log("Remote closing the connection.");
+              this.$.videoConference.closeVideoCall();
+              // Remove database listeners and delete current help request
+              this.$.firebaseApp.app.database()
+                .ref("/classes/helprequests/" + this.userCurrentClass + "/" + this.pendingHelpRequest.requestId)
+                .off();
+              this.pendingHelpRequest = null;
+            default:
+              console.log("Unknown status error", helpRequest);
+          }
+        }
+      },
+
+      // Handler for updates to the teacher's response to the pending help request
+      teacherHelpRequestUpdated: function(helpRequest) {
+        if (helpRequest) {
+          switch(helpRequest.status) {
+            case "New":
+              console.log("Tutor help request updated: ", helpRequest);
+              break;
+            case "Connecting":
+              console.log("Tutor help request updated: ", helpRequest);
+              break;
+            case "Closing":
+              console.log("Remote closing the connection.");
+              this.$.videoConference.closeVideoCall();
+              // Remove database listeners and delete current help request
+              this.$.firebaseApp.app.database()
+                .ref("/classes/helprequests/" + this.userCurrentClass + "/" + this.pendingHelpRequest.requestId)
+                .off();
+              this.pendingHelpRequest = null;
+            default:
+              console.log("Unknown status error: ", helpRequest);
+          }
+        }
+      },
+
+      // Handler for transmitting new ICE candidates to other peer
+      addNewICECandidate: function(candidate) {
+        if (this.pendingHelpRequest.isStudent) {
+          //console.log("Adding student candidate: ", candidate);
+          this.$.firebaseApp.app.database()
+            .ref("/classes/helprequestcandidates/" + this.userCurrentClass + "/" + this.pendingHelpRequest.requestId)
+            .child('student')
+            .push().set(candidate);
+        } else {
+          //console.log("Adding tutor candidate: ", candidate);
+          this.$.firebaseApp.app.database()
+            .ref("/classes/helprequestcandidates/" + this.userCurrentClass + "/" + this.pendingHelpRequest.requestId)
+            .child('tutor')
+            .push().set(candidate);
+        }
+      },
+
+      // Handler for received ICE candidates
+      receivedICECandidate: function(candidate) {
+        //console.log("Transmitting candidate to videoConf: ", candidate);
+        this.$.videoConference.handleNewICECandidate(candidate);
+      },
+
+      // Handler for locally answered help requests
+      onLocalAnswer: function(requestId) {
+        this.$.firebaseApp.app.database().ref("/classes/helprequests/" + this.userCurrentClass + "/" + requestId)
+          .once('value')
+          .then(function(snapshot) {
+            console.log("Retrieved help request: ", snapshot.val());
+            var helpRequest = snapshot.val();
+            var logEntry = {
+              "type": "Help Request/Locally Answered",
+              "message": "Student ID: " + helpRequest.studentId 
+              + " Teacher ID: " + this.$.auth.user.uid 
+              + " Request time: " + helpRequest.startTime,
+              "timestamp": Date.now()
+            };
+            this.$.firebaseApp.app.database().ref("classes/logs")
+              .child(this.userCurrentClass)
+              .push().set(logEntry);         
+            this.$.firebaseApp.app.database().ref("classes/helprequests/" + this.userCurrentClass)
+              .child(requestId)
+              .remove();
+          }.bind(this));
+      },
+
+      closeCurrentHelpRequest: function() {
+        console.log("Closing the current help request. ");
+        var logEntry = {
+            "type": "Help Request/Remote Answered",
+            "message": this.pendingHelpRequest,
+            "timestamp": Date.now()
+        };
+        // Remove database listeners
+        this.$.firebaseApp.app.database()
+          .ref("/classes/helprequests/" + this.userCurrentClass + "/" + this.pendingHelpRequest.requestId)
+          .off();
+        // Set status to closing to message remote side to close connection
+        this.$.firebaseApp.app.database().ref("classes/helprequests/" + this.userCurrentClass)
+          .child(this.pendingHelpRequest.requestId)
+          .update({"status": "Closing"}); 
+        // Save the help request to logs
+        this.$.firebaseApp.app.database().ref("classes/logs")
+          .child(this.userCurrentClass)
+          .push().set(logEntry);
+        // Clean up the ICE candidates
+        this.$.firebaseApp.app.database().ref("classes/helprequestcandidates/" + this.userCurrentClass)
+          .child(this.pendingHelpRequest.requestId)
+          .remove();
+        // Remove the help request
+        this.$.firebaseApp.app.database().ref("classes/helprequests/" + this.userCurrentClass)
+          .child(this.pendingHelpRequest.requestId)
+          .remove()
+          .then(function() {
+            this.pendingHelpRequest = null;
+          }.bind(this));
+      },
+
+      signOut: function() {
+        if (this.$.auth) {
+          this.setOnlineStatus(false);
+          this.$.videoConference.currentUser = {"name": "", "uid": "", "email": "", isTeacher: false, isStudent: false, currentClass: ""};
+          this.userCurrentClass = "";
+          this.userCurrentRole = "";
+          this.$.videoConference.enableHelpRequest = false;
+          this.$.auth.signOut();
+        }
+      }
+      
+    });
+  </script>
+</dom-module>

@@ -1,0 +1,19 @@
+{
+  "entrypoint": "index.html",
+  "shell": "src/vt-app.html",
+  "fragments": [
+    "src/vt-conference.html",
+    "src/vt-user-list.html",
+    "src/vt-help-requests.html",
+    "src/vt-class-list.html"
+  ],
+  "sourceGlobs": [
+    "src/**/*",
+    "images/**/*",
+    "bower.json"
+  ],
+  "includeDependencies": [
+    "manifest.json",
+    "bower_components/webcomponentsjs/webcomponents-lite.min.js"
+  ]
+}

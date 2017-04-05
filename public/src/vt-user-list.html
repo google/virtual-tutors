@@ -1,0 +1,187 @@
+<!--
+Copyright 2017 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+-->
+<link rel="import" href="../bower_components/paper-card/paper-card.html">
+<link rel="import" href="../bower_components/polymer/polymer.html">
+<link rel="import" href="../bower_components/paper-fab/paper-fab.html">
+<link rel="import" href="../bower_components/paper-dialog/paper-dialog.html">
+<link rel="import" href="../bower_components/paper-button/paper-button.html">
+<link rel="import" href="../bower_components/iron-icon/iron-icon.html">
+<link rel="import" href="../bower_components/paper-input/paper-input.html">
+<link rel="import" href="../bower_components/paper-radio-group/paper-radio-group.html">
+<link rel="import" href="../bower_components/paper-radio-button/paper-radio-button.html">
+<link rel="import" href="shared-styles.html">
+
+<dom-module id="vt-user-list">
+  <template>
+    <style include="shared-styles">
+       :host {
+        /* display: block; */
+        padding: 10px;
+        background: #ffffff;
+      } 
+    </style>
+
+    <firebase-query
+      id="userprovisionquery"
+      app-name="vtutor"
+      path="/users/classes/emails"
+      data="{{users}}">
+    </firebase-query>
+
+    <firebase-document
+      id="userDocument"
+      app-name="vtutor"
+      path="[[userEntryId]]"
+      data="{{userEntry}}">
+    </firebase-document>
+
+    <div class="main-container">
+      
+      <template is="dom-repeat" items="[[users]]" as="user">
+        <paper-card 
+            id$="[[user.$key]]"
+            class="user-card"
+            on-tap="edit">
+          <div class="card-content">
+          <h1>{{formatUserEmail(user.$key)}}</h1>
+          <template is="dom-repeat" items="{{user}}">
+            <span>{{item.classid}}</span>
+            <span>{{item.role}}</span>
+          </template>
+          </div>
+        </paper-card>
+      </template> 
+    </div>
+ 
+      <paper-dialog id="newUserEntryDialog" modal>
+        <h2>Enter new user email</h2>
+        <paper-input class="gray-text" label="Email" value="{{newUserEntryId}}"></paper-input>
+        <div class="buttons horizontal-layout-justified">
+          <paper-button dialog-dismiss><iron-icon class="gray" icon="close"></iron-icon></paper-button> 
+          <paper-button on-tap="persistNewEntry" dialog-dismiss autofocus><iron-icon class="gray" icon="check"></iron-icon></paper-button>
+        </div>
+      </paper-dialog>
+
+      <paper-dialog id="editor" modal>
+        <h2>Edit User Entry</h2>
+        <h3>
+          <span>[[formatUserEmail(userEntryId)]]</span>
+        </h3>
+        <template is="dom-repeat" items="{{userEntry}}" as="entry"> 
+          <paper-input class="gray-text" label="Class ID" value="{{entry.classid}}"></paper-input>         
+          <paper-radio-group 
+              class="horizontal-justified-layout" 
+              selected="{{entry.role}}"
+              fallback-selection="Student">
+            <paper-radio-button name="Student">Student</paper-radio-button>
+            <paper-radio-button name="Teacher">Teacher</paper-radio-button>
+          </paper-radio-group>
+        </template> 
+        <div class="buttons horizontal-justified-layout">
+          <paper-button><iron-icon class="gray" on-tap="delete" icon="delete"></iron-icon></paper-button>
+          <!-- <paper-button dialog-dismiss><iron-icon class="gray" icon="close"></iron-icon></paper-button> -->
+          <paper-button dialog-confirm autofocus><iron-icon class="gray" icon="check"></iron-icon></paper-button>
+        </div>
+      </paper-dialog>
+   
+    <paper-fab 
+      icon="add"
+      on-tap="addUserEntry"
+      disabled="[[!online]]"
+      aria-label="Add user">
+    </paper-fab> 
+  </template>
+
+  <script>
+    Polymer({
+      is: 'vt-user-list',
+
+      properties: {
+        users: {
+          type: Array,
+          //observer: '_userUpdated'
+        },
+        userEntry: {
+          type: Array,
+          value: [],
+          observer: '_userUpdated'
+        },
+        userEntryId: {
+          type: String,
+          notify: true
+        },
+        newUserEntryId: {
+          type: String
+        }       
+      },
+
+      edit: function(event){
+        console.log("Card ID: ", event.currentTarget.id);
+        this.userEntryId = this.toUserEntryId(event.currentTarget.id);
+        this.$.editor.open();
+        //console.log("Found user entry: ", this.userEntryId);
+      },
+
+      toUserEntryId: function(userId) {
+        return "/users/classes/emails/" + userId;
+      },
+
+      formatUserEmail: function(useremail) {
+        if (useremail.includes("/users/classes/emails/")) {
+          var pathArray = useremail.split("/");
+          return pathArray[pathArray.length - 1].replace(/-dot-/gi, '.');
+        }
+        else {
+          return useremail.replace(/-dot-/gi, '.');
+        }
+      },
+
+      addUserEntry: function() {
+        this.newUserEntryId = "";
+        this.$.newUserEntryDialog.open();
+      },
+
+      persistNewEntry: function() {
+        this.newUserEntryId = this.newUserEntryId.replace(/\./gi, '-dot-');
+        //console.log("Formatted user Id: ", this.newUserEntryId);
+        this.userEntryId =  this.toUserEntryId(this.newUserEntryId);
+        //console.log("Entry Id With Path: ", this.userEntryId);
+        this.userEntry = [{"role":"Student", "classid":"0"}];
+        //console.log("Entry: ", this.userEntry);
+        this.$.userDocument.save("/users/classes/emails/", this.newUserEntryId)
+          .then(function() {
+            // this.$.userDocument.reset();
+            console.log("Saved entry is: ", this.userEntry);
+            console.log("Saved ID is: ", this.userEntryId);
+            //TODO Figure out why the sync for the newly created element is broken
+            //TODO Current workaround is to refresh the page :(
+            this.$.editor.open();
+          }.bind(this));           
+      },
+
+      delete: function(event) {
+        console.log("Deleting ID: ", this.userEntryId);
+        this.$.userDocument.destroy();
+        this.$.editor.close();
+      },
+
+      _userUpdated: function() {
+        console.log("User selected is: ", this.userEntry);
+      }
+
+    });
+  </script>
+</dom-module>
